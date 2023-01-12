@@ -1,0 +1,37 @@
+
+data_generation_image: txrf/data_generation_replication_test:0.8
+flink_jar_path: <flink-jar>
+
+enrichment_type: async
+cache_max_size: 3000
+
+kafka_port: 9094
+kafka_input_topic: input-topic
+kafka_output_topic: output-topic
+kafka_db_topic: db-topic
+
+data_generation_start_time_offset_s: 60
+data_generation_db_retrieve_limit: 2000
+data_generation_increase_throughput: false
+data_generation_iteration_time_s: 5400
+data_generation_throughput_per_pod_start: 200
+data_generation_throughput_per_pod_end: 200
+data_generation_throughput_per_pod_steps: 0
+data_generation_pod_replicas: 10
+
+cassandra_port: 9042
+cassandra_keyspace: master
+cassandra_user: <cassandra-user>
+cassandra_password: <cassandra-password>
+cassandra_release_name: cassandra
+
+redis_port: 6379
+redis_password: <redis-password>
+redis_hash_key: transactions
+
+existing_account_prob: 0
+existing_recipient_prob: 0
+max_devices_per_account: 1
+new_device_prob: 0
+max_location_per_account: 1
+new_location_prob: 0

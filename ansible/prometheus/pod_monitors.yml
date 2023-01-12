@@ -1,0 +1,43 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: flink-podmonitor-taskmanager
+  labels:
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      type: flink-native-kubernetes
+      component: taskmanager
+  namespaceSelector:
+    matchNames:
+      - flink
+  podTargetLabels:
+    - type
+    - component
+  podMetricsEndpoints:
+    - port: metrics
+      interval: 10s
+      path: "/"
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: flink-podmonitor-jobmanager
+  labels:
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      type: flink-native-kubernetes
+      component: jobmanager
+  namespaceSelector:
+    matchNames:
+      - flink
+  podTargetLabels:
+    - type
+    - component
+  podMetricsEndpoints:
+    - port: metrics
+      interval: 10s
+      path: "/"

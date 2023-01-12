@@ -1,0 +1,163 @@
+
+- name: Add bitnami helm repo
+  kubernetes.core.helm_repository:
+    name: bitnami
+    repo_url: "https://charts.bitnami.com/bitnami"
+
+- name: Add flink helm repo
+  kubernetes.core.helm_repository:
+    name: flink-operator
+    repo_url: "https://downloads.apache.org/flink/flink-kubernetes-operator-1.1.0"
+
+- name: Install flink cert-manager    
+  k8s:                       
+    definition: '{{ item }}'                                                                                                                                                                                       
+    namespace: "{{ namespace_flink }}"
+  with_items: '{{ lookup("url", "https://github.com/jetstack/cert-manager/releases/download/v1.8.2/cert-manager.yaml", split_lines=False) | from_yaml_all | list }}'                                              
+  when: item is not none
+
+- name: Install flink operator
+  kubernetes.core.helm:
+    name: flink
+    namespace: "{{ namespace_flink }}"
+    create_namespace: yes
+    chart_ref: flink-operator/flink-kubernetes-operator
+    state: "{{ cluster_state }}"
+    wait: yes
+    values:
+      version: 1.1.0
+      metrics:
+        port: 9999
+
+- name: Install kafka
+  ansible.builtin.script: /"{{ lookup('env','WORKDIR') }}"/ansible/kafka/run.sh "{{ cluster_state }}"
+
+- name: Install Cassandra Chart
+  kubernetes.core.helm:
+    name: "{{ cassandra_release_name }}"
+    namespace: "{{ namespace_cassandra }}"
+    create_namespace: yes
+    chart_ref: bitnami/cassandra
+    state: "{{ cluster_state }}"
+    wait: yes
+    values:
+      replicaCount: "{{ cassandra_replicas }}"
+      dbUser:
+        user: "{{ cassandra_user }}"
+        password: "{{ cassandra_password }}"
+      service:
+        type: ClusterIP
+      nodeSelector:
+        component: "{{ cassandra_node_label }}"
+
+- name: Install Prometheus Chart
+  kubernetes.core.helm:
+    name: prometheus
+    namespace: "{{ namespace_prometheus }}"
+    create_namespace: yes
+    chart_ref: bitnami/kube-prometheus
+    state: "{{ cluster_state }}"
+    wait: yes
+    values:
+      grafana:
+        enabled: false
+      alertmanager:
+        enabled: false
+      prometheus:
+        serviceMonitor:
+          selfMonitor: false
+        service:
+          type: ClusterIP
+
+- name: Install Redis Chart
+  kubernetes.core.helm:
+    name: redis
+    namespace: "{{ namespace_redis }}"
+    create_namespace: yes
+    chart_ref: bitnami/redis
+    state: "{{ cluster_state }}"
+    wait: yes
+    values:
+      auth:
+        password: "{{ redis_password }}"
+      master:
+        service:
+          type: ClusterIP
+      master:
+        nodeSelector:
+          component: "{{ redis_node_label }}"
+      replica:
+        nodeSelector:
+          component: "{{ redis_node_label }}"
+
+- name: Create pod monitors
+  shell: |
+    if [ "{{ cluster_state }}" = "present" ]
+    then
+    kubectl create -f /"{{ lookup('env','WORKDIR') }}"/ansible/"{{ pod_monitor_file }}"
+    fi
+
+- name: Init cassandra tables
+  shell: |
+    if [ "{{ cluster_state }}" = "present" ]
+    then
+      kubectl -n cassandra cp /"{{ lookup('env','WORKDIR') }}"/ansible/"{{ cassandra_setup_file }}" "{{ cassandra_release_name }}"-0:/tmp/setup.cql
+      kubectl -n cassandra exec -it "{{ cassandra_release_name }}"-0 -- bash -c "cqlsh -u "{{ cassandra_user }}" -p "{{ cassandra_password }}" -f /tmp/setup.cql"
+    fi
+
+
+- name: get kafka cluster ip 
+  shell: "kubectl get service/my-cluster-kafka-bootstrap -o jsonpath='{.spec.clusterIP}' -n my-kafka-project"
+  register: kafka_ip
+
+- set_fact: 
+    kafka_ip={{ kafka_ip.stdout }}
+
+- name: get cassandra cluster ip 
+  shell: "kubectl get service/\"{{ cassandra_release_name }}\" -o jsonpath='{.spec.clusterIP}' -n cassandra"
+  register: cassandra_ip
+
+- set_fact: 
+    cassandra_ip={{ cassandra_ip.stdout }}
+
+- name: Delete init cassandra pod if exists
+  k8s:
+    api_version: v1
+    kind: Pod
+    namespace: default
+    name: init-db
+    state: absent
+
+- name: Init cassandra data
+  kubernetes.core.k8s:
+    state: "{{ cluster_state }}"
+    definition:
+      apiVersion: v1
+      kind: Pod
+      metadata:
+        namespace: default
+        name: init-db
+      spec:
+        containers:
+          - name: init-db
+            image: txrf/init_db:0.2
+            args: [
+              "--db_host", "{{ cassandra_ip | string }}", 
+              "--db_port", "{{ cassandra_port | string }}", 
+              "--db_keyspace", "{{ cassandra_keyspace | string }}", 
+              "--db_user", "{{ cassandra_user | string }}", 
+              "--db_password", "{{ cassandra_password | string }}", 
+              "--db_msg_num", "{{ cassandra_init_entries_num | string }}", 
+              "--write_to_kafka", "{{ write_init_entries_to_kafka | string }}", 
+              "--kafka_host", "{{ kafka_ip | string }}", 
+              "--kafka_port", "{{ kafka_port | string }}", 
+              "--kafka_topic", "{{ kafka_input_topic | string }}", 
+              "--existing_account_prob", "{{ existing_account_prob | string }}", 
+              "--existing_recipient_prob" , "{{ existing_recipient_prob | string }}", 
+              "--max_devices_per_account", "{{ max_devices_per_account | string }}", 
+              "--new_device_prob", "{{ new_device_prob | string }}",
+              "--max_locations_per_account", "{{ max_location_per_account | string }}",
+              "--new_location_prob", "{{ new_location_prob | string }}"
+              ]
+            imagePullPolicy: IfNotPresent
+        restartPolicy: Never

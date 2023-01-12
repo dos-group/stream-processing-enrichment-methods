@@ -1,0 +1,157 @@
+
+- name: get kafka cluster ip 
+  shell: "kubectl get service/my-cluster-kafka-bootstrap -o jsonpath='{.spec.clusterIP}' -n my-kafka-project"
+  register: kafka_ip
+
+- set_fact: 
+    kafka_ip={{ kafka_ip.stdout }}
+
+- name: get cassandra cluster ip 
+  shell: "kubectl get service/\"{{ cassandra_release_name }}\" -o jsonpath='{.spec.clusterIP}' -n cassandra"
+  register: cassandra_ip
+
+- set_fact: 
+    cassandra_ip={{ cassandra_ip.stdout }}
+
+- name: get redis cluster ip 
+  shell: "kubectl get service/redis-master -o jsonpath='{.spec.clusterIP}' -n redis"
+  register: redis_ip
+
+- set_fact: 
+    redis_ip={{ redis_ip.stdout }}
+
+- name: get data generation start time
+  shell: "echo $(($(date +%s) + {{ data_generation_start_time_offset_s }}))"
+  register: start_time
+
+- set_fact: 
+    start_time={{ start_time.stdout }}
+
+- name: Create data generation pods
+  kubernetes.core.k8s:
+    state: "{{ cluster_state }}"
+    definition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        namespace: default
+        name: data-generation
+      spec:
+        replicas: "{{ data_generation_pod_replicas }}"
+        selector:
+          matchLabels:
+            k8s-app: data_generation
+        template:
+          metadata:
+            labels:
+              k8s-app: data_generation
+          spec:
+            containers:
+              - name: data-generation
+                image: "{{ data_generation_image }}"
+                args: [
+                  "--event_type", "{{ data_generation_event_type }}",
+                  "--enrichment_type", "{{ enrichment_type | string }}",
+                  "--db_host", "{{ cassandra_ip | string }}", 
+                  "--db_port", "{{ cassandra_port | string }}", 
+                  "--db_keyspace", "{{ cassandra_keyspace | string }}", 
+                  "--db_user", "{{ cassandra_user | string }}", 
+                  "--db_password", "{{ cassandra_password | string }}", 
+                  "--db_retrieve_limit", "{{ data_generation_db_retrieve_limit | string }}", 
+                  "--kafka_host", "{{ kafka_ip | string }}", 
+                  "--kafka_port", "{{ kafka_port | string }}", 
+                  "--kafka_topic", "{{ kafka_input_topic | string }}", 
+                  "--kafka_increase_msg_s", "{{ data_generation_increase_throughput | string }}", 
+                  "--kafka_start_time", "{{ start_time | string }}", 
+                  "--kafka_iter_per_size", "{{ data_generation_iteration_time_s | string }}", 
+                  "--kafka_msg_s_start", "{{ data_generation_throughput_per_pod_start | string }}", 
+                  "--kafka_msg_s_end", "{{ data_generation_throughput_per_pod_end | string }}", 
+                  "--kafka_msg_s_steps", "{{ data_generation_throughput_per_pod_steps | string }}", 
+                  "--existing_account_prob", "{{ existing_account_prob | string }}", 
+                  "--existing_recipient_prob" , "{{ existing_recipient_prob | string }}", 
+                  "--max_devices_per_account", "{{ max_devices_per_account | string }}", 
+                  "--new_device_prob", "{{ new_device_prob | string }}",
+                  "--max_locations_per_account", "{{ max_location_per_account | string }}",
+                  "--new_location_prob", "{{ new_location_prob | string }}"
+                  ]
+                imagePullPolicy: IfNotPresent
+
+
+- name: Create flink session cluster
+  kubernetes.core.k8s:
+    state: "{{ cluster_state }}"
+    definition:
+      apiVersion: flink.apache.org/v1beta1
+      kind: FlinkDeployment
+      metadata:
+        namespace: flink
+        name: session-cluster
+      spec:
+        image: flink:1.14
+        flinkVersion: v1_14
+        flinkConfiguration:
+          taskmanager.numberOfTaskSlots: "2"
+          kubernetes.rest-service.exposed.type: ClusterIp
+          metrics.reporters: prom
+          metrics.reporter.prom.class: org.apache.flink.metrics.prometheus.PrometheusReporter
+          metrics.reporter.prom.port: "9999"
+          kubernetes.jobmanager.annotations: prometheus.io/scrape:true,prometheus.io/port:9999,
+          kubernetes.jobmanager.labels: component:jobmanager,
+          kubernetes.taskmanager.annotations: prometheus.io/scrape:true,prometheus.io/port:9999,
+          kubernetes.taskmanager.labels: component:taskmanager
+          state.backend.rocksdb.localdir: "/tmp"
+        podTemplate:
+          spec:
+            containers:
+              - name: flink-main-container
+                ports:
+                  - name: metrics
+                    containerPort: 9999
+            nodeSelector:
+              component: flink
+        jobManager:
+          resource:
+            memory: "16384m"
+            cpu: 4
+        taskManager:
+          resource:
+            memory: "16384m"
+            cpu: 4
+        serviceAccount: flink
+
+
+- name: Create flink job
+  kubernetes.core.k8s:
+    state: "{{ cluster_state }}"
+    definition:
+      apiVersion: flink.apache.org/v1beta1
+      kind: FlinkSessionJob
+      metadata:
+        namespace: flink
+        name: session-job
+      spec:
+        deploymentName: session-cluster
+        job:
+          jarURI: "{{ flink_jar_path }}"
+          parallelism: 8
+          upgradeMode: stateless
+          entryClass: org.myorg.OperatorsBase.FraudDetection
+          args: [
+            --kafkaHost, "{{ kafka_ip | string }}", 
+            --kafkaPort,"{{ kafka_port | string }}", 
+            --kafkaInputTopic, "{{ kafka_input_topic | string }}", 
+            --kafkaOutputTopic, "{{ kafka_output_topic | string }}", 
+            --kafkaDbTopic, "{{ kafka_db_topic | string }}",
+            --dbHost, "{{ cassandra_ip | string }}", 
+            --dbPort, "{{ cassandra_port | string }}", 
+            --dbUser, "{{ cassandra_user | string }}", 
+            --dbPassword, "{{ cassandra_password | string }}", 
+            --dbKeyspace, "{{ cassandra_keyspace | string }}",
+            --enrichmentType, "{{ enrichment_type | string }}",
+            --cacheMaxSize, "{{ cache_max_size | string }}",
+            --redisHost, "{{ redis_ip | string }}",
+            --redisPort, "{{ redis_port | string }}",
+            --redisPassword, "{{ redis_password | string }}",
+            --redisHashKey, "{{ redis_hash_key | string }}",
+            --modelURL, "{{ model_url }}"
+            ]

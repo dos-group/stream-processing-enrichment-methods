@@ -1,0 +1,19 @@
+---
+
+- name: Create GKE Cluster using Ansible GCP Library
+  hosts: localhost
+  gather_facts: no
+
+  vars:
+    gcp_project: ${GCP_PROJECT_ID}
+    gcp_cred_kind: serviceaccount
+    gcp_cred_file: /workdir/my-sa.json
+    gcp_zone: europe-west3-a
+    gcp_region: europe-west3
+    gcp_machine_type: c2-standard-8
+    network: ${GKE_NETWORK}
+    subnet: ${GKE_SUBNET}
+
+  roles:
+    - gke-cluster
+    - infrastructure

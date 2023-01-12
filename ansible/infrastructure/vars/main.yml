@@ -1,0 +1,34 @@
+
+namespace_cassandra: cassandra
+cassandra_replicas: 1
+cassandra_port: 9042
+cassandra_keyspace: master
+cassandra_user: <cassandra-password>
+cassandra_password: <cassandra-password>
+cassandra_node_label: other
+cassandra_setup_file: cassandra/setup.cql
+cassandra_release_name: cassandra
+
+cassandra_init_entries_num: 2000
+write_init_entries_to_kafka: False
+existing_account_prob: 1
+existing_recipient_prob: 0
+max_devices_per_account: 1
+new_device_prob: 0
+max_location_per_account: 1
+new_location_prob: 0
+
+namespace_prometheus: prometheus
+pod_monitor_file: prometheus/pod_monitors.yml
+
+namespace_redis: redis
+redis_password: <redis-password>
+redis_node_label: other
+
+namespace_flink: flink
+
+kafka_port: 9094
+kafka_input_topic: input-topic
+kafka_output_topic: output-topic
+kafka_db_topic: db-topic
+
