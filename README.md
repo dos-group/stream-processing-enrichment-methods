@@ -1,5 +1,7 @@
 # Evaluation of data enrichment methods for distributed stream processing engines
 
+**Note**: This repository is a fork of the [original repository](https://github.com/cfab20/stream-processing-enrichment-methods), but additionally includes the gathered data, plots, and associated code. It can be found in the `evaluation` directory.
+
 ## Introduction
 <img src="flink_logo.png" align="left" width="100px"/>
 
